@@ -7,5 +7,5 @@ preview*.png
 
 # Only the icon is published; any other art in this folder stays private
 art/*
-!art/icon.ico
+!art/grumpy-shark.ico
 !art/icon.png

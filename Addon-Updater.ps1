@@ -42,7 +42,7 @@ $form.StartPosition = 'CenterScreen'
 $form.BackColor = $sea
 $form.ForeColor = $foam
 $form.Font = $font
-$iconFile = Join-Path $art 'icon.ico'
+$iconFile = Join-Path $art 'grumpy-shark.ico'
 if (Test-Path $iconFile) { $form.Icon = New-Object Drawing.Icon($iconFile) }
 
 # ---------- header: ocean picture + grumpy mascot ----------
