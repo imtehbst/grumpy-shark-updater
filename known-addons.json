@@ -1,0 +1,11 @@
+[
+  { "name": "DBM (Core, raids, timers)", "source": "github", "repo": "DeadlyBossMods/DeadlyBossMods", "folder": "DBM-Core", "curseId": 3358 },
+  { "name": "DBM Dungeons",              "source": "github", "repo": "DeadlyBossMods/DBM-Dungeons", "folder": "DBM-Party-Forever", "curseId": [314994, 61621] },
+  { "name": "Plater",                    "source": "github", "repo": "Tercioo/Plater-Nameplates", "folder": "Plater", "curseId": 100547 },
+  { "name": "RestedXP Guides",           "source": "github", "repo": "RestedXP/RXPGuides", "folder": "RXPGuides", "curseId": 486246 },
+  { "name": "Questie",                   "source": "github", "repo": "Questie/Questie", "folder": "QuestieDB", "curseId": 334372 },
+  { "name": "Pawn",                      "source": "github", "repo": "VgerMods/Pawn", "assetPattern": "-Forever\\.zip$", "folder": "Pawn" },
+  { "name": "Crafter's Journal",         "source": "github", "repo": "brunobasas/CraftersJournal", "assetPattern": "-forever\\.zip$", "folder": "CraftersJournal", "curseId": 1752523 },
+  { "name": "Details",                   "source": "curseforge", "projectId": 61284, "folder": "Details" },
+  { "name": "DungeonJournal",            "source": "curseforge", "projectId": 1707971, "folder": "ForeverDungeonJournal" }
+]

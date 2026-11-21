@@ -1,0 +1,11 @@
+# Personal to each player - never uploaded
+addons.json
+state.json
+backups/
+removed-wago-addons/
+preview*.png
+
+# Only the icon is published; any other art in this folder stays private
+art/*
+!art/icon.ico
+!art/icon.png
