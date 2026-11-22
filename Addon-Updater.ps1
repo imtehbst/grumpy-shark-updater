@@ -13,6 +13,7 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $config  = Read-Config
 $state   = Read-State
 $results = @{}   # addon name -> status from the last check
+$work    = New-WorkFolder   # kept all session so Update reuses what Check downloaded; removed on close
 $art     = Join-Path $PSScriptRoot 'art'
 
 # ---------- ocean colours (same family as Fins & Fangs) ----------
@@ -244,6 +245,7 @@ function Set-RowStatus($row) {
     switch ($r.status) {
         'current' { $cell.Value = 'Up to date';      $cell.Style.ForeColor = $kelp }
         'error'   { $cell.Value = "Couldn't check";  $cell.Style.ForeColor = $blood }
+        'failed'  { $cell.Value = 'Update failed (hover for why)'; $cell.Style.ForeColor = $blood }
         'update'  {
             if ($addon.hold) { $cell.Value = 'Update off (new version out)'; $cell.Style.ForeColor = $muted }
             else             { $cell.Value = 'Update available';             $cell.Style.ForeColor = $coral }
@@ -273,7 +275,6 @@ function Invoke-Check {
     if (-not (Show-Folder)) { $status.Text = 'Pick your AddOns folder first.'; return }
     Set-Busy $true 'Sniffing for updates...'
     $script:state = Read-State
-    $work = New-WorkFolder
     try {
         for ($i = 0; $i -lt $config.addons.Count; $i++) {
             $addon = $config.addons[$i]
@@ -285,14 +286,12 @@ function Invoke-Check {
             $results[$addon.name] = $r
             Set-RowStatus $grid.Rows[$i]
         }
-    } finally { Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue }
-    Set-Busy $false ('Checked ' + (Get-Date -Format 't'))
+    } finally { Set-Busy $false ('Checked ' + (Get-Date -Format 't')) }   # never leave the buttons stuck on busy
     Update-Summary
 }
 
 function Invoke-Update {
     Set-Busy $true 'Chomping updates...'
-    $work = New-WorkFolder
     $backup = New-BackupPath
     $done = 0
     try {
@@ -306,14 +305,15 @@ function Invoke-Update {
                 Invoke-Background { param($c, $a, $l, $w, $b) Install-Addon $c $a $l $w $b } @($config, $addon, $r.latest, $work, $backup) | Out-Null
                 $state[$addon.name] = $r.latest.version; Save-State $state
                 $r.status = 'done'; $done++
-            } catch { $r.status = 'error'; $r.message = "Update failed: $($_.Exception.Message)" }
+            } catch { $r.status = 'failed'; $r.message = $_.Exception.Message }
             Set-RowStatus $grid.Rows[$i]
         }
-    } finally { Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue }
-    Invoke-Background { Remove-OldBackups }
-    $msg = "$done addon(s) updated."
-    if ($done -and (Test-WowRunning)) { $msg += ' Type /reload in game.' }
-    Set-Busy $false $msg
+        Invoke-Background { Remove-OldBackups }
+    } finally {
+        $msg = "$done addon(s) updated."
+        if ($done -and (Test-WowRunning)) { $msg += ' Type /reload in game.' }
+        Set-Busy $false $msg
+    }
     if ($done) { $status.ForeColor = $kelp }
     Update-Summary
 }
@@ -467,7 +467,23 @@ $btnFolder.add_Click({
     Invoke-Check
 })
 $btnFind.add_Click({ if (-not $script:busy) { Show-FindDialog } })
-$newVer.add_LinkClicked({ Start-Process $newVer.Tag })
+$newVer.add_LinkClicked({
+    if ($script:busy) { return }
+    $u = $newVer.Tag
+    # A git clone (the developer's copy) updates with git instead: just open the release page.
+    if (Test-Path (Join-Path $PSScriptRoot '.git')) { Start-Process $u.url; return }
+    $ans = [Windows.Forms.MessageBox]::Show("Update Grumpy Shark Updater to $($u.version)?`nYour addon list and backups stay as they are. The window reopens when it's done.", 'Update the updater', 'YesNo', 'Question')
+    if ($ans -ne 'Yes') { return }
+    Set-Busy $true "Fetching version $($u.version)..."
+    try { Invoke-Background { param($u) Install-AppUpdate $u } @(,$u) }
+    catch {
+        Set-Busy $false "Couldn't update: $($_.Exception.Message) Opening the download page instead."
+        $status.ForeColor = $coral; Start-Process $u.url; return
+    }
+    Set-Busy $false 'Updated - reopening...'
+    Start-Process (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe') "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`""
+    $form.Close()
+})
 
 # Right-click a row -> Stop tracking.
 $menu = New-Object Windows.Forms.ContextMenuStrip
@@ -500,8 +516,8 @@ $form.add_Shown({
     Invoke-Check
     $u = Get-AppUpdate
     if ($u) {
-        $newVer.Text = "New version $($u.version) available - click to download"
-        $newVer.Tag = $u.url
+        $newVer.Text = "New version $($u.version) available - click to update"
+        $newVer.Tag = $u
         $newVer.Location = New-Object Drawing.Point(($header.Width - $newVer.PreferredWidth - 16), 84)
         $newVer.Visible = $true
     }
@@ -520,3 +536,4 @@ $form.add_Shown({
 $form.add_FormClosing({ param($s, $e) if ($script:busy) { $e.Cancel = $true; $status.Text = 'Hang on, still working - close me when this finishes.' } })
 
 [void]$form.ShowDialog()
+Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

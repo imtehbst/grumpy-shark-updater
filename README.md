@@ -35,7 +35,9 @@ Your addon settings (the `WTF` folder) are never touched.
 
 ## Updating the updater
 
-When a new version is out, a **"New version available"** link appears at the top of the window. Download the new ZIP and unzip it **over your old folder**. Your addon list and backups are kept.
+When a new version is out, a **"New version available - click to update"** link appears at the top of the window. Click it and say Yes: it updates itself and reopens. Your addon list, backups and any art you added are kept.
+
+On version 1.0.2 or older, the link only opens the download page. Download the new ZIP and unzip it **over your old folder** once; after that, updates are one click.
 
 ## Notes
 

@@ -51,6 +51,9 @@ try {
     # 5. A failed install puts the old folder back instead of leaving the addon missing
     $work = New-WorkFolder
     $ready = Expand-Release $l $work                       # unpacked now, so Install-Addon reuses it
+    $zipFile = Get-ChildItem $work -Filter *.zip | Select-Object -First 1; $stamp = $zipFile.LastWriteTimeUtc
+    $again = Expand-Release $l $work
+    Assert ((Get-Item $zipFile.FullName).LastWriteTimeUtc -eq $stamp -and $again.Count -eq $ready.Count) 'a second unpack reuses the download'
     $toc = Get-ChildItem $ready[0].FullName -Filter *.toc | Select-Object -First 1
     $lock = [IO.File]::Open($toc.FullName, 'Open', 'Read', 'None')   # an open file stops the folder moving
     try { Install-Addon $cfg $addon $l $work (Join-Path $box 'backup2') | Out-Null; $threw = $false } catch { $threw = $true } finally { $lock.Dispose() }

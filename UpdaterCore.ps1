@@ -71,14 +71,30 @@ function Read-Config {
     return $c
 }
 
-# Returns @{ version; url } when GitHub has a newer Grumpy Shark Updater release, else $null. Never throws.
+# Returns @{ version; url; zip } when GitHub has a newer Grumpy Shark Updater release, else $null. Never throws.
 function Get-AppUpdate {
     try {
         $rel = Get-Json "https://api.github.com/repos/$AppRepo/releases/latest"
         $latest = $rel.tag_name -replace '^v', ''
-        if ($AppVersion -and [version]$latest -gt [version]$AppVersion) { return @{ version = $latest; url = $rel.html_url } }
+        if ($AppVersion -and [version]$latest -gt [version]$AppVersion) { return @{ version = $latest; url = $rel.html_url; zip = $rel.zipball_url } }
     } catch {}
     return $null
+}
+
+# Downloads the release and copies its files over this folder. The release holds only program files, so the
+# player's addons.json, state.json, backups and own art are never touched. A git clone (the developer's copy) is skipped.
+function Install-AppUpdate($u, $dest = $Root) {
+    if (Test-Path (Join-Path $dest '.git')) { throw 'This copy is a git clone - update it with git pull.' }
+    $w = New-WorkFolder
+    try {
+        $zip = Join-Path $w 'app.zip'
+        $null = Wait-Task ((New-WebClient).DownloadFileTaskAsync($u.zip, $zip))
+        Assert-SafeZip $zip
+        [IO.Compression.ZipFile]::ExtractToDirectory($zip, "$w\x")
+        $top = @(Get-ChildItem "$w\x" -Directory)[0]   # GitHub wraps the files in one owner-repo-sha folder
+        if (-not $top -or -not (Test-Path (Join-Path $top.FullName 'UpdaterCore.ps1'))) { throw "That download isn't Grumpy Shark Updater." }
+        Copy-Item (Join-Path $top.FullName '*') $dest -Recurse -Force
+    } finally { Remove-Item $w -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 # Looks for <WoW>\_forever_\Interface\AddOns via Battle.net's registry entry, then common install spots.
@@ -204,9 +220,13 @@ function Get-Latest($config, $addon) {
 function Expand-Release($latest, $work) {
     # The file name comes from a website: keep only the name part so it can't point outside the work folder.
     $name = [IO.Path]::GetFileName([string]$latest.file); if (-not $name) { $name = 'download.zip' }
-    $zip = Join-Path $work $name
-    $out = Join-Path $work ([IO.Path]::GetFileNameWithoutExtension($name))
-    if (-not (Test-Path $out)) {
+    # The window keeps one work folder for the whole session, so Update reuses what Check unpacked.
+    # Keyed by version too, since some releases reuse the same zip name every time.
+    $ver = ([string]$latest.version).Split([IO.Path]::GetInvalidFileNameChars()) -join '_'
+    $out = Join-Path $work "$ver~$([IO.Path]::GetFileNameWithoutExtension($name))"
+    $zip = "$out.zip"
+    # Install moves the unpacked folders out, so an empty cache means "download again".
+    if (-not (Test-Path $out) -or -not (Get-ChildItem $out -Directory)) {
         $null = Wait-Task ((New-WebClient).DownloadFileTaskAsync($latest.url, $zip))   # its result is an empty value that would join the folder list
         Assert-SafeZip $zip
         [IO.Compression.ZipFile]::ExtractToDirectory($zip, $out)   # 3x faster than Expand-Archive; Assert-SafeZip loaded the assembly
@@ -407,6 +427,9 @@ function New-GithubEntry($config, $link) {
 }
 
 function New-WorkFolder {
+    # Tidy up folders left behind if the app was ever killed mid-job.
+    Get-ChildItem $env:TEMP -Directory -Filter 'wow-updater-*' -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     $w = Join-Path $env:TEMP ('wow-updater-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory $w | Out-Null
     return $w
