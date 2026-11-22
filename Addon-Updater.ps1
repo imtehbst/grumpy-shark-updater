@@ -137,7 +137,7 @@ $form.Controls.Add($btnFind)
 # ---------- grid ----------
 $grid = New-Object Windows.Forms.DataGridView
 $grid.Location = New-Object Drawing.Point(16, 158)
-$grid.Size = New-Object Drawing.Size(832, 330)
+$grid.Size = New-Object Drawing.Size(832, 306)
 $grid.Anchor = 'Top, Bottom, Left, Right'
 $grid.BackgroundColor = $panel
 $grid.BorderStyle = 'None'
@@ -176,6 +176,17 @@ foreach ($c in @(@('Addon', 34), @('Installed', 22), @('Latest', 22), @('Status'
 }
 $grid.Columns['Addon'].DefaultCellStyle.Font = $bold
 $form.Controls.Add($grid)
+
+# Off by default; on adds a Startup-folder shortcut that checks quietly at sign-in and pops a notice only when needed.
+$chkStartup = New-Object Windows.Forms.CheckBox
+$chkStartup.Text = 'Check for updates when Windows starts (a small notice appears only if something new is out)'
+$chkStartup.AutoSize = $true
+$chkStartup.Location = New-Object Drawing.Point(16, 472)
+$chkStartup.Anchor = 'Bottom, Left'
+$chkStartup.ForeColor = $muted
+$chkStartup.Checked = Test-StartupCheck
+$chkStartup.add_CheckedChanged({ Set-StartupCheck $chkStartup.Checked; $status.ForeColor = $muted; $status.Text = if ($chkStartup.Checked) { "I'll check quietly each time you sign in." } else { 'Startup check off.' } })
+$form.Controls.Add($chkStartup)
 
 # ---------- bottom bar ----------
 function New-Button($label, $x, $primary) {
@@ -535,5 +546,6 @@ $form.add_Shown({
 # Closing mid-update could leave an addon half-moved: wait until the current job finishes.
 $form.add_FormClosing({ param($s, $e) if ($script:busy) { $e.Cancel = $true; $status.Text = 'Hang on, still working - close me when this finishes.' } })
 
+$form.Height += 24   # room for the startup tick box; done after layout so the list stretches and the buttons move down
 [void]$form.ShowDialog()
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

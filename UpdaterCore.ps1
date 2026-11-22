@@ -435,4 +435,19 @@ function New-WorkFolder {
     return $w
 }
 
+# "Check when Windows starts": a shortcut in the Startup folder runs a quiet check that only speaks up when
+# something new is out (Update-Addons.ps1 -Notify). No scheduled task, so it needs no admin rights.
+$script:StartupLink = Join-Path ([Environment]::GetFolderPath('Startup')) 'Grumpy Shark addon check.lnk'
+function Test-StartupCheck { Test-Path $StartupLink }
+function Set-StartupCheck([bool]$on) {
+    if (-not $on) { Remove-Item $StartupLink -ErrorAction SilentlyContinue; return }
+    $s = (New-Object -ComObject WScript.Shell).CreateShortcut($StartupLink)
+    $s.TargetPath = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $s.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $Root 'Update-Addons.ps1')`" -Notify"
+    $s.WorkingDirectory = $Root
+    $s.IconLocation = "$(Join-Path $Root 'art\grumpy-shark.ico'),0"
+    $s.WindowStyle = 7
+    $s.Save()
+}
+
 function New-BackupPath { Join-Path $BackupRoot (Get-Date -Format 'yyyy-MM-dd_HHmmss') }

@@ -29,6 +29,8 @@ That's it. From then on, open it and click **Update now** whenever it says updat
 
 WoW can stay open while it updates. Type `/reload` in game afterwards.
 
+**Check when Windows starts:** tick the box under the list and it checks quietly each time you sign in. A small shark notice pops up only when updates are waiting; click it to open the updater.
+
 **Addons it can't find** aren't published for Forever on GitHub, CurseForge or WoWInterface (for example Wago-only addons). Those are simply left alone. Update them by hand.
 
 Your addon settings (the `WTF` folder) are never touched.
