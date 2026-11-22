@@ -280,7 +280,7 @@ function Invoke-Check {
             $grid.Rows[$i].Cells['Status'].Value = 'Checking...'
             $grid.Rows[$i].Cells['Status'].Style.ForeColor = $muted
             [Windows.Forms.Application]::DoEvents()
-            $r = Get-AddonStatus $config $addon $state $work
+            $r = Invoke-Background { param($c, $a, $s, $w) Get-AddonStatus $c $a $s $w } @($config, $addon, $state, $work)
             if ($r.firstSeen) { $state[$addon.name] = $r.latest.version; Save-State $state }
             $results[$addon.name] = $r
             Set-RowStatus $grid.Rows[$i]
@@ -303,14 +303,14 @@ function Invoke-Update {
             $grid.Rows[$i].Cells['Status'].Value = 'Installing...'
             [Windows.Forms.Application]::DoEvents()
             try {
-                Install-Addon $config $addon $r.latest $work $backup | Out-Null
+                Invoke-Background { param($c, $a, $l, $w, $b) Install-Addon $c $a $l $w $b } @($config, $addon, $r.latest, $work, $backup) | Out-Null
                 $state[$addon.name] = $r.latest.version; Save-State $state
                 $r.status = 'done'; $done++
             } catch { $r.status = 'error'; $r.message = "Update failed: $($_.Exception.Message)" }
             Set-RowStatus $grid.Rows[$i]
         }
     } finally { Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue }
-    Remove-OldBackups
+    Invoke-Background { Remove-OldBackups }
     $msg = "$done addon(s) updated."
     if ($done -and (Test-WowRunning)) { $msg += ' Type /reload in game.' }
     Set-Busy $false $msg
@@ -340,7 +340,7 @@ function Remove-Tracked($index) {
 function Show-FindDialog {
     if (-not (Show-Folder)) { $status.Text = 'Pick your AddOns folder first.'; return }
     Set-Busy $true 'Rummaging through your AddOns folder...'
-    try { $found = @(Find-NewAddons $config) } finally { Set-Busy $false '' ; Update-Summary }
+    try { $found = @(Invoke-Background { param($c) Find-NewAddons $c } @(,$config)) } finally { Set-Busy $false '' ; Update-Summary }
     $ok  = @($found | Where-Object { $_.available })
     $bad = @($found | Where-Object { -not $_.available })
 
@@ -486,7 +486,8 @@ $btnUndo.add_Click({
     if ($script:busy) { return }
     $ans = [Windows.Forms.MessageBox]::Show('Put back the addon versions from before the last update?', 'Undo last update', 'YesNo', 'Question')
     if ($ans -ne 'Yes') { return }
-    $names = Restore-LastBackup $config
+    Set-Busy $true 'Putting the old versions back...'
+    try { $names = @(Invoke-Background { param($c) Restore-LastBackup $c } @(,$config)) } finally { Set-Busy $false '' }
     if (-not $names) { $status.Text = 'Nothing to undo.'; return }
     $status.Text = "Restored: $($names -join ', ')"
     Invoke-Check
@@ -514,5 +515,8 @@ $form.add_Shown({
         $form.Close()
     }
 })
+
+# Closing mid-update could leave an addon half-moved: wait until the current job finishes.
+$form.add_FormClosing({ param($s, $e) if ($script:busy) { $e.Cancel = $true; $status.Text = 'Hang on, still working - close me when this finishes.' } })
 
 [void]$form.ShowDialog()

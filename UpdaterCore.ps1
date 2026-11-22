@@ -14,12 +14,42 @@ $script:KeepBackups = 3
 $script:AppVersion = (Get-Content (Join-Path $Root 'VERSION') -ErrorAction SilentlyContinue | Select-Object -First 1)
 $script:AppRepo    = 'imtehbst/grumpy-shark-updater'
 
+# True only on the window's own thread (STA with WinForms loaded) - the console and the background worker never pump.
+function Test-UiThread {
+    [bool]('System.Windows.Forms.Application' -as [type]) -and [Threading.Thread]::CurrentThread.GetApartmentState() -eq 'STA'
+}
+
 # Web calls run async and this waits, pumping the window's messages so it never shows "Not responding".
-# The console version has no WinForms loaded, so it just waits. Errors come out as the original WebException.
+# Errors come out as the original WebException.
 function Wait-Task($task) {
-    $ui = 'System.Windows.Forms.Application' -as [type]
-    while (-not $task.IsCompleted) { if ($ui) { $ui::DoEvents() }; Start-Sleep -Milliseconds 30 }
+    $ui = Test-UiThread
+    while (-not $task.IsCompleted) { if ($ui) { [Windows.Forms.Application]::DoEvents() }; Start-Sleep -Milliseconds 30 }
     $task.GetAwaiter().GetResult()
+}
+
+# Runs slow core work (unzipping thousands of files, moving folders, scanning) on a background thread while the
+# window keeps drawing; unzipping alone took 5-14 s per addon with the window frozen. Same process, so objects
+# like $config and $state are shared, not copied. Outside the window it just runs the block directly.
+$script:Worker = $null
+function Invoke-Background([scriptblock]$block, [object[]]$argList = @()) {
+    if (-not (Test-UiThread)) { return & $block @argList }
+    if (-not $script:Worker) {
+        $script:Worker = [runspacefactory]::CreateRunspace()
+        $script:Worker.ApartmentState = 'MTA'   # so Test-UiThread is false in there
+        $script:Worker.Open()
+        $init = [PowerShell]::Create(); $init.Runspace = $script:Worker
+        [void]$init.AddScript(". '$((Join-Path $Root 'UpdaterCore.ps1') -replace "'", "''")'; `$ErrorActionPreference = 'Stop'").Invoke()
+        $init.Dispose()
+    }
+    $ps = [PowerShell]::Create(); $ps.Runspace = $script:Worker
+    [void]$ps.AddScript($block.ToString())
+    foreach ($a in $argList) { [void]$ps.AddArgument($a) }
+    try {
+        $h = $ps.BeginInvoke()
+        while (-not $h.IsCompleted) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 30 }
+        try { $ps.EndInvoke($h) }
+        catch { throw $(if ($_.Exception.InnerException) { $_.Exception.InnerException } else { $_.Exception }) }
+    } finally { $ps.Dispose() }
 }
 
 function New-WebClient {
@@ -179,7 +209,7 @@ function Expand-Release($latest, $work) {
     if (-not (Test-Path $out)) {
         $null = Wait-Task ((New-WebClient).DownloadFileTaskAsync($latest.url, $zip))   # its result is an empty value that would join the folder list
         Assert-SafeZip $zip
-        Expand-Archive $zip -DestinationPath $out -Force
+        [IO.Compression.ZipFile]::ExtractToDirectory($zip, $out)   # 3x faster than Expand-Archive; Assert-SafeZip loaded the assembly
     }
     $folders = @(Get-ChildItem $out -Directory)
     if (-not $folders) { throw 'download had no addon folders' }
