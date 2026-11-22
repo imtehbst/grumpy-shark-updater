@@ -238,6 +238,7 @@ function Set-RowStatus($row) {
     $r = $results[$addon.name]
     $cell = $row.Cells['Status']
     $row.Cells['Installed'].Value = Get-InstalledText $addon
+    $cell.ToolTipText = if ($r -and $r.message) { $r.message } else { '' }   # hover a red row to see why
     if (-not $r) { $cell.Value = ''; return }
     $row.Cells['Latest'].Value = if ($r.latest) { Format-Version $r.latest.version } else { '-' }
     switch ($r.status) {
@@ -305,7 +306,7 @@ function Invoke-Update {
                 Install-Addon $config $addon $r.latest $work $backup | Out-Null
                 $state[$addon.name] = $r.latest.version; Save-State $state
                 $r.status = 'done'; $done++
-            } catch { $r.status = 'error' }
+            } catch { $r.status = 'error'; $r.message = "Update failed: $($_.Exception.Message)" }
             Set-RowStatus $grid.Rows[$i]
         }
     } finally { Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue }

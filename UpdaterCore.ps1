@@ -14,6 +14,23 @@ $script:KeepBackups = 3
 $script:AppVersion = (Get-Content (Join-Path $Root 'VERSION') -ErrorAction SilentlyContinue | Select-Object -First 1)
 $script:AppRepo    = 'imtehbst/grumpy-shark-updater'
 
+# Web calls run async and this waits, pumping the window's messages so it never shows "Not responding".
+# The console version has no WinForms loaded, so it just waits. Errors come out as the original WebException.
+function Wait-Task($task) {
+    $ui = 'System.Windows.Forms.Application' -as [type]
+    while (-not $task.IsCompleted) { if ($ui) { $ui::DoEvents() }; Start-Sleep -Milliseconds 30 }
+    $task.GetAwaiter().GetResult()
+}
+
+function New-WebClient {
+    $w = New-Object Net.WebClient
+    $w.Headers['User-Agent'] = $Headers['User-Agent']
+    $w.Encoding = [Text.Encoding]::UTF8
+    return $w
+}
+
+function Get-Json($url) { Wait-Task ((New-WebClient).DownloadStringTaskAsync($url)) | ConvertFrom-Json }
+
 function Read-Config {
     # First run on a new PC: start with a blank list (addons.json is personal and not in the download).
     if (-not (Test-Path $ConfigPath)) {
@@ -27,7 +44,7 @@ function Read-Config {
 # Returns @{ version; url } when GitHub has a newer Grumpy Shark Updater release, else $null. Never throws.
 function Get-AppUpdate {
     try {
-        $rel = Invoke-RestMethod "https://api.github.com/repos/$AppRepo/releases/latest" -Headers $Headers
+        $rel = Get-Json "https://api.github.com/repos/$AppRepo/releases/latest"
         $latest = $rel.tag_name -replace '^v', ''
         if ($AppVersion -and [version]$latest -gt [version]$AppVersion) { return @{ version = $latest; url = $rel.html_url } }
     } catch {}
@@ -80,11 +97,11 @@ function Get-TocVersion($folder) {
 }
 
 function Test-WowRunning {
-    return [bool](Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^Wow' })
+    return [bool](Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^Wow(Classic|T|B)?$' })
 }
 
 function Get-GithubLatest($config, $addon) {
-    $rel = Invoke-RestMethod "https://api.github.com/repos/$($addon.repo)/releases/latest" -Headers $Headers
+    $rel = Get-Json "https://api.github.com/repos/$($addon.repo)/releases/latest"
     $zips = @($rel.assets | Where-Object { $_.name -like '*.zip' })
     $asset = $null
     if ($addon.assetPattern) {
@@ -93,7 +110,7 @@ function Get-GithubLatest($config, $addon) {
         # Packager-built releases ship a release.json saying which zip suits which game flavor.
         $meta = $rel.assets | Where-Object { $_.name -eq 'release.json' } | Select-Object -First 1
         if ($meta) {
-            $info = Invoke-RestMethod $meta.browser_download_url -Headers $Headers
+            $info = Get-Json $meta.browser_download_url
             $pick = $info.releases | Where-Object { -not $_.nolib -and ($_.metadata.flavor -contains $config.flavor) } | Select-Object -First 1
             if ($pick) { $asset = $zips | Where-Object { $_.name -eq $pick.filename } | Select-Object -First 1 }
         }
@@ -109,10 +126,17 @@ function Get-GithubLatest($config, $addon) {
 }
 
 function Get-CurseforgeLatest($config, $addon) {
-    $list = Invoke-RestMethod "https://www.curseforge.com/api/v1/mods/$($addon.projectId)/files?pageIndex=0&pageSize=30&sort=dateCreated&sortDescending=true" -Headers $Headers
-    $file = $list.data |
-        Where-Object { $_.releaseType -eq 1 -and -not $_.isEarlyAccessContent -and ($_.gameVersionTypeIds -contains [int]$config.curseforgeGameVersionTypeId) } |
-        Sort-Object { [datetime]$_.dateCreated } -Descending | Select-Object -First 1
+    # The site API ignores a game-version filter, so page through newest-first: busy addons upload many
+    # Retail/Classic files between Forever ones (Details: 8 Forever files in its newest 50).
+    # shortcut: looks at the newest 200 files only; raise the page count if an addon with a Forever file says it has none.
+    $file = $null
+    for ($page = 0; $page -lt 4 -and -not $file; $page++) {
+        $list = Get-Json "https://www.curseforge.com/api/v1/mods/$($addon.projectId)/files?pageIndex=$page&pageSize=50&sort=dateCreated&sortDescending=true"
+        $file = $list.data |
+            Where-Object { $_.releaseType -eq 1 -and -not $_.isEarlyAccessContent -and ($_.gameVersionTypeIds -contains [int]$config.curseforgeGameVersionTypeId) } |
+            Sort-Object { [datetime]$_.dateCreated } -Descending | Select-Object -First 1
+        if (@($list.data).Count -lt 50) { break }
+    }
     if (-not $file) { throw "no release file for $($config.flavor) on CurseForge" }
     $version = $file.displayName -replace '\.zip$', ''
     return @{ version = $version; url = "https://www.curseforge.com/api/v1/mods/$($addon.projectId)/files/$($file.id)/download"; file = $file.fileName }
@@ -122,7 +146,7 @@ function Get-CurseforgeLatest($config, $addon) {
 function Get-WowiPrefix($config) { if ($config.wowinterfaceVersionPrefix) { $config.wowinterfaceVersionPrefix } else { '1.60.' } }
 
 function Get-WowiLatest($config, $addon) {
-    $d = @(Invoke-RestMethod "https://api.mmoui.com/v4/game/WOW/filedetails/$($addon.wowiId).json" -Headers $Headers)[0]
+    $d = @(Get-Json "https://api.mmoui.com/v4/game/WOW/filedetails/$($addon.wowiId).json")[0]
     if (-not $d -or -not $d.downloadUri) { throw 'not found on WoWInterface' }
     return @{ version = [string]$d.version; url = $d.downloadUri; file = $d.fileName }
 }
@@ -131,7 +155,7 @@ function Get-WowiLatest($config, $addon) {
 function Get-WowiForeverMap($config) {
     $map = @{}
     $prefix = Get-WowiPrefix $config
-    try { $list = Invoke-RestMethod 'https://api.mmoui.com/v4/game/WOW/filelist.json' -Headers $Headers } catch { return $map }
+    try { $list = Get-Json 'https://api.mmoui.com/v4/game/WOW/filelist.json' } catch { return $map }
     foreach ($a in $list) {
         if (-not (@($a.gameVersions) | Where-Object { "$_".StartsWith($prefix) })) { continue }
         foreach ($p in @($a.addons)) { if ($p.path -and -not $map[$p.path]) { $map[$p.path] = $a } }
@@ -148,15 +172,28 @@ function Get-Latest($config, $addon) {
 }
 
 function Expand-Release($latest, $work) {
-    $zip = Join-Path $work $latest.file
-    $out = Join-Path $work ([IO.Path]::GetFileNameWithoutExtension($latest.file))
+    # The file name comes from a website: keep only the name part so it can't point outside the work folder.
+    $name = [IO.Path]::GetFileName([string]$latest.file); if (-not $name) { $name = 'download.zip' }
+    $zip = Join-Path $work $name
+    $out = Join-Path $work ([IO.Path]::GetFileNameWithoutExtension($name))
     if (-not (Test-Path $out)) {
-        Invoke-WebRequest $latest.url -OutFile $zip -Headers $Headers -UseBasicParsing
+        $null = Wait-Task ((New-WebClient).DownloadFileTaskAsync($latest.url, $zip))   # its result is an empty value that would join the folder list
+        Assert-SafeZip $zip
         Expand-Archive $zip -DestinationPath $out -Force
     }
     $folders = @(Get-ChildItem $out -Directory)
     if (-not $folders) { throw 'download had no addon folders' }
     return $folders
+}
+
+# Refuses a zip whose entries climb out of the folder it's unpacked into (..\ or C:\ paths).
+function Assert-SafeZip($zip) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $z = [IO.Compression.ZipFile]::OpenRead($zip)
+    try {
+        $bad = $z.Entries | Where-Object { $_.FullName -match '(^|[\\/])\.\.([\\/]|$)' -or $_.FullName -match '^([\\/]|[A-Za-z]:)' } | Select-Object -First 1
+        if ($bad) { throw "download has an unsafe file path: $($bad.FullName)" }
+    } finally { $z.Dispose() }
 }
 
 # Returns @{ status = 'current' | 'update' | 'error'; latest; folders; message }
@@ -187,12 +224,22 @@ function Install-Addon($config, $addon, $latest, $work, $backup) {
     $folders = Expand-Release $latest $work
     foreach ($f in $folders) {
         $target = Join-Path $config.addonsPath $f.Name
+        $saved = Join-Path $backup $f.Name
+        $moved = $false
         if (Test-Path $target) {
             New-Item -ItemType Directory $backup -Force | Out-Null
-            if (Test-Path (Join-Path $backup $f.Name)) { Remove-Item (Join-Path $backup $f.Name) -Recurse -Force }
-            Move-Item $target (Join-Path $backup $f.Name)
+            if (Test-Path $saved) { Remove-Item $saved -Recurse -Force }
+            Move-Item $target $saved -ErrorAction Stop
+            $moved = $true
         }
-        Move-Item $f.FullName $target
+        # If the new folder can't go in, put the old one back so the addon isn't left missing or half-installed.
+        # (A failed Move-Item can leave a partial copy at $target, so clear that first.)
+        try { Move-Item $f.FullName $target -ErrorAction Stop }
+        catch {
+            if (Test-Path $target) { Remove-Item $target -Recurse -Force }
+            if ($moved) { Move-Item $saved $target }
+            throw
+        }
     }
 
     # Folders this addon installed last time but no longer ships: move them to the backup too (undo brings them back).

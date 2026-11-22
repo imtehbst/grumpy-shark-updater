@@ -47,6 +47,26 @@ try {
     Assert (Test-Path "$box\AddOns\SharedFolder") "another addon's folder left alone"
     Assert (((Read-Config).addons | Where-Object { $_.wowiId -eq 17996 }).folders -join ',' -eq ($names -join ',')) 'installed folders recorded in addons.json'
     Remove-Item $work -Recurse -Force
+
+    # 5. A failed install puts the old folder back instead of leaving the addon missing
+    $work = New-WorkFolder
+    $ready = Expand-Release $l $work                       # unpacked now, so Install-Addon reuses it
+    $toc = Get-ChildItem $ready[0].FullName -Filter *.toc | Select-Object -First 1
+    $lock = [IO.File]::Open($toc.FullName, 'Open', 'Read', 'None')   # an open file stops the folder moving
+    try { Install-Addon $cfg $addon $l $work (Join-Path $box 'backup2') | Out-Null; $threw = $false } catch { $threw = $true } finally { $lock.Dispose() }
+    Assert $threw 'install reports the failure'
+    Assert (Test-Path "$box\AddOns\GTFO\GTFO_Camelot.toc") 'old GTFO put back after the failed install'
+    Remove-Item $work -Recurse -Force
+
+    # 6. A zip with ..\ paths is refused before anything is unpacked
+    $evil = Join-Path $box 'evil.zip'
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $z = [IO.Compression.ZipFile]::Open($evil, 'Create'); [void]$z.CreateEntry('..\..\escaped.txt'); $z.Dispose()
+    try { Assert-SafeZip $evil; $refused = $false } catch { $refused = $true }
+    Assert $refused 'zip with ..\ paths refused'
+    $good = Join-Path $box 'good.zip'
+    $z = [IO.Compression.ZipFile]::Open($good, 'Create'); [void]$z.CreateEntry('Addon\Addon.toc'); $z.Dispose()
+    Assert-SafeZip $good; 'ok   normal zip accepted'
     'ALL OK'
 } finally {
     Remove-Item $box -Recurse -Force -ErrorAction SilentlyContinue
