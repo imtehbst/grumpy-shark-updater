@@ -272,24 +272,32 @@ function Get-AddonStatus($config, $addon, $state, $work) {
 # Installs one addon's latest release; old folders go into $backup. Returns the folder names.
 function Install-Addon($config, $addon, $latest, $work, $backup) {
     $folders = Expand-Release $latest $work
-    foreach ($f in $folders) {
-        $target = Join-Path $config.addonsPath $f.Name
-        $saved = Join-Path $backup $f.Name
-        $moved = $false
-        if (Test-Path $target) {
-            New-Item -ItemType Directory $backup -Force | Out-Null
-            if (Test-Path $saved) { Remove-Item $saved -Recurse -Force }
-            Move-Item $target $saved -ErrorAction Stop
-            $moved = $true
+    # If any folder can't go in, put back every folder of this addon swapped so far, so a multi-folder addon
+    # (DBM, Questie) is never left mixing new and old versions.
+    $done = @()
+    try {
+        foreach ($f in $folders) {
+            $target = Join-Path $config.addonsPath $f.Name
+            $saved = Join-Path $backup $f.Name
+            $step = @{ target = $target; saved = $saved; moved = $false; placing = $false }
+            $done += $step
+            if (Test-Path $target) {
+                New-Item -ItemType Directory $backup -Force | Out-Null
+                if (Test-Path $saved) { Remove-Item $saved -Recurse -Force }
+                Move-Item $target $saved -ErrorAction Stop
+                $step.moved = $true
+            }
+            $step.placing = $true   # only from here on is whatever sits at $target ours to clear
+            Move-Item $f.FullName $target -ErrorAction Stop
         }
-        # If the new folder can't go in, put the old one back so the addon isn't left missing or half-installed.
-        # (A failed Move-Item can leave a partial copy at $target, so clear that first.)
-        try { Move-Item $f.FullName $target -ErrorAction Stop }
-        catch {
-            if (Test-Path $target) { Remove-Item $target -Recurse -Force }
-            if ($moved) { Move-Item $saved $target }
-            throw
+    } catch {
+        [array]::Reverse($done)
+        foreach ($s in $done) {
+            # A failed Move-Item can leave a partial copy at the target, so clear it before the old one goes back.
+            if ($s.placing -and (Test-Path $s.target)) { Remove-Item $s.target -Recurse -Force -ErrorAction SilentlyContinue }
+            if ($s.moved) { Move-Item $s.saved $s.target -ErrorAction SilentlyContinue }
         }
+        throw
     }
 
     # Folders this addon installed last time but no longer ships: move them to the backup too (undo brings them back).
@@ -326,6 +334,13 @@ function Restore-LastBackup($config) {
     }
     Remove-Item $last.FullName -Recurse -Force
     Remove-Item $StatePath -ErrorAction SilentlyContinue   # next check re-reads versions from the TOC files
+    # Switch the restored addons' updates off, or the next "Update now" reinstalls the version just undone.
+    foreach ($a in $config.addons) {
+        if (@(@($a.folder) + @($a.folders) | Where-Object { $_ -and $names -contains $_ }).Count) {
+            $a | Add-Member -NotePropertyName hold -NotePropertyValue $true -Force
+        }
+    }
+    Save-Config $config
     return $names
 }
 

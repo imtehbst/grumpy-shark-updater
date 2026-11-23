@@ -504,7 +504,7 @@ $grid.add_CellMouseDown({
     param($s, $e)
     if ($e.Button -eq 'Right' -and $e.RowIndex -ge 0) { $grid.ClearSelection(); $grid.Rows[$e.RowIndex].Selected = $true; $grid.CurrentCell = $grid.Rows[$e.RowIndex].Cells[1] }
 })
-$menu.add_Opening({ param($s, $e) if ($grid.SelectedRows.Count -eq 0) { $e.Cancel = $true } })
+$menu.add_Opening({ param($s, $e) if ($script:busy -or $grid.SelectedRows.Count -eq 0) { $e.Cancel = $true } })   # removing a row mid-check shifts the list
 $stopItem.add_Click({ if ($grid.SelectedRows.Count) { Remove-Tracked $grid.SelectedRows[0].Index } })
 
 $btnCheck.add_Click({ if (-not $script:busy) { Invoke-Check } })
@@ -516,8 +516,10 @@ $btnUndo.add_Click({
     Set-Busy $true 'Putting the old versions back...'
     try { $names = @(Invoke-Background { param($c) Restore-LastBackup $c } @(,$config)) } finally { Set-Busy $false '' }
     if (-not $names) { $status.Text = 'Nothing to undo.'; return }
-    $status.Text = "Restored: $($names -join ', ')"
+    # Restore-LastBackup switched those addons' updates off; show it in the tick boxes.
+    for ($i = 0; $i -lt $config.addons.Count; $i++) { $grid.Rows[$i].Cells['On'].Value = -not $config.addons[$i].hold }
     Invoke-Check
+    $status.Text = "Restored: $($names -join ', '). Their updates are switched off - tick them to update again."
 })
 
 $form.add_Shown({

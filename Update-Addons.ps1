@@ -63,6 +63,7 @@ if ($Restore) {
     $names = Restore-LastBackup $config
     if (-not $names) { Write-Line 'No backups to restore.' Yellow; return }
     $names | ForEach-Object { Write-Line "Restored $_" Green }
+    Write-Line 'Updates for those addons are switched off now; turn them back on in the window (Update tick box).' Yellow
     if (Test-WowRunning) { Write-Line 'WoW is open - type /reload in game to load them.' Yellow }
     return
 }
@@ -95,10 +96,13 @@ try {
                 if ($addon.hold) { Write-Line "$label OFF - $($s.latest.version) available (switched off)" Yellow }
                 elseif ($DryRun) { Write-Line "$label would update: $from -> $($s.latest.version)" Cyan }
                 else {
-                    Install-Addon $config $addon $s.latest $work $backup | Out-Null
-                    $state[$addon.name] = $s.latest.version; Save-State $state
-                    $updated++
-                    Write-Line "$label updated: $from -> $($s.latest.version)" Green
+                    # One failed install (old version already put back) mustn't stop the rest.
+                    try {
+                        Install-Addon $config $addon $s.latest $work $backup | Out-Null
+                        $state[$addon.name] = $s.latest.version; Save-State $state
+                        $updated++
+                        Write-Line "$label updated: $from -> $($s.latest.version)" Green
+                    } catch { Write-Line "$label update failed, kept $from`: $($_.Exception.Message)" Red }
                 }
             }
         }
