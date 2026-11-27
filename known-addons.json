@@ -7,5 +7,6 @@
   { "name": "Pawn",                      "source": "github", "repo": "VgerMods/Pawn", "assetPattern": "-Forever\\.zip$", "folder": "Pawn" },
   { "name": "Crafter's Journal",         "source": "github", "repo": "brunobasas/CraftersJournal", "assetPattern": "-forever\\.zip$", "folder": "CraftersJournal", "curseId": 1752523 },
   { "name": "Details",                   "source": "curseforge", "projectId": 61284, "folder": "Details" },
-  { "name": "DungeonJournal",            "source": "curseforge", "projectId": 1707971, "folder": "ForeverDungeonJournal" }
+  { "name": "DungeonJournal",            "source": "curseforge", "projectId": 1707971, "folder": "ForeverDungeonJournal" },
+  { "name": "Forever Fishing",           "source": "curseforge", "projectId": 1708816, "folder": "ForeverFishing" }
 ]

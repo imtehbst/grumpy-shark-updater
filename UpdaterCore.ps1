@@ -20,10 +20,24 @@ function Test-UiThread {
 }
 
 # Web calls run async and this waits, pumping the window's messages so it never shows "Not responding".
-# Errors come out as the original WebException.
-function Wait-Task($task) {
+# Errors come out as the original WebException. A site that stops answering for $script:WebTimeoutSec
+# (no reply, or a download whose file stops growing) is cancelled with a clear error instead of spinning forever.
+$script:WebTimeoutSec = 30
+function Wait-Task($task, $client = $null, [string]$file = '') {
     $ui = Test-UiThread
-    while (-not $task.IsCompleted) { if ($ui) { [Windows.Forms.Application]::DoEvents() }; Start-Sleep -Milliseconds 30 }
+    $quiet = [Diagnostics.Stopwatch]::StartNew(); $size = -1
+    while (-not $task.IsCompleted) {
+        if ($ui) { [Windows.Forms.Application]::DoEvents() }
+        Start-Sleep -Milliseconds 30
+        if ($file -and (Test-Path -LiteralPath $file)) {
+            $now = (Get-Item -LiteralPath $file).Length
+            if ($now -ne $size) { $size = $now; $quiet.Restart() }
+        }
+        if ($quiet.Elapsed.TotalSeconds -ge $script:WebTimeoutSec) {
+            if ($client) { $client.CancelAsync() }
+            throw [TimeoutException]"The site stopped answering (waited $($script:WebTimeoutSec) s). Try again later."
+        }
+    }
     $task.GetAwaiter().GetResult()
 }
 
@@ -59,7 +73,7 @@ function New-WebClient {
     return $w
 }
 
-function Get-Json($url) { Wait-Task ((New-WebClient).DownloadStringTaskAsync($url)) | ConvertFrom-Json }
+function Get-Json($url) { $c = New-WebClient; Wait-Task $c.DownloadStringTaskAsync($url) $c | ConvertFrom-Json }
 
 function Read-Config {
     # First run on a new PC: start with a blank list (addons.json is personal and not in the download).
@@ -88,7 +102,7 @@ function Install-AppUpdate($u, $dest = $Root) {
     $w = New-WorkFolder
     try {
         $zip = Join-Path $w 'app.zip'
-        $null = Wait-Task ((New-WebClient).DownloadFileTaskAsync($u.zip, $zip))
+        $c = New-WebClient; $null = Wait-Task $c.DownloadFileTaskAsync($u.zip, $zip) $c $zip
         Assert-SafeZip $zip
         [IO.Compression.ZipFile]::ExtractToDirectory($zip, "$w\x")
         $top = @(Get-ChildItem "$w\x" -Directory)[0]   # GitHub wraps the files in one owner-repo-sha folder
@@ -227,7 +241,7 @@ function Expand-Release($latest, $work) {
     $zip = "$out.zip"
     # Install moves the unpacked folders out, so an empty cache means "download again".
     if (-not (Test-Path $out) -or -not (Get-ChildItem $out -Directory)) {
-        $null = Wait-Task ((New-WebClient).DownloadFileTaskAsync($latest.url, $zip))   # its result is an empty value that would join the folder list
+        $c = New-WebClient; $null = Wait-Task $c.DownloadFileTaskAsync($latest.url, $zip) $c $zip   # its result is an empty value that would join the folder list
         Assert-SafeZip $zip
         [IO.Compression.ZipFile]::ExtractToDirectory($zip, $out)   # 3x faster than Expand-Archive; Assert-SafeZip loaded the assembly
     }
